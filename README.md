@@ -105,9 +105,8 @@ You can transfer to multiple receivers. In the demo below, query parameter `?n=3
 Here are public Piping Servers.
 
 * <https://ppng.io>
-* <https://piping.nwtgck.repl.co>
+* <https://piping.onrender.com>
 * <https://piping.glitch.me>
-* <https://piping-47q675ro2guv.runkit.sh>
 
 ## Self-host on Docker
 
@@ -133,13 +132,7 @@ curl -L https://github.com/nwtgck/piping-server-pkg/releases/download/v1.12.0/pi
 ```
 The binaries are for multi-platform including Linux on x64, Linux on ARM64, Linux on ARMv7, Intel macOS, Apple Silicon macOS and Windows on x64. See <https://github.com/nwtgck/piping-server-pkg> to run on the other platform.
 
-## Self-host on free services
-
-Here are easier ways to own your Piping Server.
-
-- Remix on Glitch <https://glitch.com/~piping>
-- Clone on RunKit: <https://runkit.com/nwtgck/piping>
-- Fork on Repl.it: <https://repl.it/@nwtgck/piping>
+## Self-host
 
 See "[Ecosystem around Piping Server · nwtgck/piping-server Wiki](https://github.com/nwtgck/piping-server/wiki/Ecosystem-around-Piping-Server)" to find more about self-hosting.
 
