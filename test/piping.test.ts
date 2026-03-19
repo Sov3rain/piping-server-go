@@ -633,7 +633,7 @@ Host: 127.0.0.1:${pipingPort}
       method: "POST",
       path: `/mydataid`
     });
-    sendReq.on("response", (res) => res.resume());
+    sendReq.on("response", (response) => response.resume());
     sendReq.on("error", () => {});
 
     // Send chunked data
@@ -654,11 +654,11 @@ Host: 127.0.0.1:${pipingPort}
         port: pipingPort,
         method: "POST",
         path: `/mydataid`
-      }, (res) => {
+      }, (response) => {
         let body = "";
-        res.setEncoding("utf8");
-        res.on("data", (chunk) => body += chunk);
-        res.on("end", () => resolve({ statusCode: res.statusCode, body }));
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => body += chunk);
+        response.on("end", () => resolve({ statusCode: response.statusCode, body }));
       });
       sendReq.on("error", reject);
       sendReq.setHeader("Content-Length", "this is a content".length);
@@ -671,8 +671,8 @@ Host: 127.0.0.1:${pipingPort}
       port: pipingPort,
       method: "GET",
       path: `/mydataid`
-    }, (res) => {
-      res.once("data", () => {
+    }, (response) => {
+      response.once("data", () => {
         receiverReq.destroy();
       });
     });
@@ -838,7 +838,7 @@ Host: 127.0.0.1:${pipingPort}
       method: "POST",
       path: `/mydataid?n=2`
     });
-    sendReq.on("response", (res) => res.resume());
+    sendReq.on("response", (response) => response.resume());
     sendReq.on("error", () => {});
     // Send content-length
     sendReq.setHeader("Content-Length", "this is a content".length);
@@ -871,7 +871,7 @@ Host: 127.0.0.1:${pipingPort}
       method: "POST",
       path: `/mydataid?n=2`
     });
-    sendReq.on("response", (res) => res.resume());
+    sendReq.on("response", (response) => response.resume());
     sendReq.on("error", () => {});
     // Send content-length
     sendReq.setHeader("Content-Length", "this is a content".length);
@@ -1021,7 +1021,7 @@ Host: 127.0.0.1:${pipingPort}
       method: "POST",
       path: `/mydataid?n=2`
     });
-    sendReq.on("response", (res) => res.resume());
+    sendReq.on("response", (response) => response.resume());
     sendReq.on("error", () => {});
     // Send content-length
     sendReq.setHeader("Content-Length", "this is a content".length);
@@ -1058,7 +1058,7 @@ Host: 127.0.0.1:${pipingPort}
       method: "POST",
       path: `/mydataid?n=2`
     });
-    sendReq.on("response", (res) => res.resume());
+    sendReq.on("response", (response) => response.resume());
     sendReq.on("error", () => {});
     // Send content-length
     sendReq.setHeader("Content-Length", "this is a content".length);
@@ -1095,7 +1095,7 @@ Host: 127.0.0.1:${pipingPort}
       method: "POST",
       path: `/mydataid?n=2`
     });
-    sendReq.on("response", (res) => res.resume());
+    sendReq.on("response", (response) => response.resume());
     sendReq.on("error", () => {});
     // Send content-length
     sendReq.setHeader("Content-Length", "this is a content".length);
