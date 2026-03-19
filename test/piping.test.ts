@@ -318,6 +318,7 @@ Host: 127.0.0.1:${pipingPort}
       body: "this is a content"
     });
     assert.strictEqual(sendRes.headers["content-type"], "text/plain");
+    assert.strictEqual(await sendRes.body.text(), "[INFO] Transfer completed to 1 receiver(s).\n");
 
     // Wait for response
     const res = await resPromise;
@@ -483,13 +484,15 @@ Host: 127.0.0.1:${pipingPort}
 
   it("should pass sender's multiple X-Piping to receivers' ones", async () => {
     // Create a GET request
-    const getReq = http.request({
-      host: "127.0.0.1",
-      port: pipingPort,
-      method: "GET",
-      path: `/mydataid`
+    const getResPromise: Promise<http.IncomingMessage> = new Promise((resolve) => {
+      const getReq = http.request({
+        host: "127.0.0.1",
+        port: pipingPort,
+        method: "GET",
+        path: `/mydataid`
+      }, (res) => resolve(res));
+      getReq.end();
     });
-    getReq.end();
 
     // Send data
     await requestWithoutKeepAlive(`${pipingUrl}/mydataid`, {
@@ -502,11 +505,12 @@ Host: 127.0.0.1:${pipingPort}
       body: "this is a content"
     });
 
-    // Wait for GET
-    await new Promise(resolve => getReq.on("close", resolve));
+    const getRes = await getResPromise;
+    getRes.resume();
+    await new Promise(resolve => getRes.on("end", resolve));
 
     // Should return multiple X-Piping
-    const xPiping = utils.parseHeaders((getReq as any).res.rawHeaders).get("x-piping");
+    const xPiping = utils.parseHeaders(getRes.rawHeaders).get("x-piping");
     assert.deepStrictEqual(xPiping, ["mymetadata1", "mymetadata2", "mymetadata3"]);
   });
 
@@ -613,6 +617,7 @@ Host: 127.0.0.1:${pipingPort}
 
     const sendRes = await sendResPromise;
     assert.strictEqual(sendRes.headers["content-type"], "text/plain");
+    assert.strictEqual(await sendRes.body.text(), "[INFO] Transfer completed to 1 receiver(s).\n");
 
     // Body should be the sent data
     assert.strictEqual(await getRes.body.text(), "this is a content");
@@ -628,6 +633,8 @@ Host: 127.0.0.1:${pipingPort}
       method: "POST",
       path: `/mydataid`
     });
+    sendReq.on("response", (res) => res.resume());
+    sendReq.on("error", () => {});
 
     // Send chunked data
     sendReq.write("this is");
@@ -638,6 +645,43 @@ Host: 127.0.0.1:${pipingPort}
 
     // Body should be the sent data
     assert.strictEqual(await res.body.text(), "this is a content");
+  });
+
+  it("should return a final error response when the only receiver aborts", async () => {
+    const senderResPromise: Promise<{ statusCode?: number, body: string }> = new Promise((resolve, reject) => {
+      const sendReq = http.request({
+        host: "127.0.0.1",
+        port: pipingPort,
+        method: "POST",
+        path: `/mydataid`
+      }, (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => body += chunk);
+        res.on("end", () => resolve({ statusCode: res.statusCode, body }));
+      });
+      sendReq.on("error", reject);
+      sendReq.setHeader("Content-Length", "this is a content".length);
+      sendReq.write("this is");
+      setTimeout(() => sendReq.end(" a content"), 50);
+    });
+
+    const receiverReq = http.request({
+      host: "127.0.0.1",
+      port: pipingPort,
+      method: "GET",
+      path: `/mydataid`
+    }, (res) => {
+      res.once("data", () => {
+        receiverReq.destroy();
+      });
+    });
+    receiverReq.on("error", () => {});
+    receiverReq.end();
+
+    const senderRes = await senderResPromise;
+    assert.strictEqual(senderRes.statusCode, 500);
+    assert.strictEqual(senderRes.body, "[ERROR] All receiver(s) aborted before completion.\n");
   });
 
   it("should be sent by PUT method", async () => {
@@ -794,6 +838,8 @@ Host: 127.0.0.1:${pipingPort}
       method: "POST",
       path: `/mydataid?n=2`
     });
+    sendReq.on("response", (res) => res.resume());
+    sendReq.on("error", () => {});
     // Send content-length
     sendReq.setHeader("Content-Length", "this is a content".length);
     // Send chunk of data
@@ -825,6 +871,8 @@ Host: 127.0.0.1:${pipingPort}
       method: "POST",
       path: `/mydataid?n=2`
     });
+    sendReq.on("response", (res) => res.resume());
+    sendReq.on("error", () => {});
     // Send content-length
     sendReq.setHeader("Content-Length", "this is a content".length);
     // Send chunk of data
@@ -973,6 +1021,8 @@ Host: 127.0.0.1:${pipingPort}
       method: "POST",
       path: `/mydataid?n=2`
     });
+    sendReq.on("response", (res) => res.resume());
+    sendReq.on("error", () => {});
     // Send content-length
     sendReq.setHeader("Content-Length", "this is a content".length);
     // Send chunk of data
@@ -1008,6 +1058,8 @@ Host: 127.0.0.1:${pipingPort}
       method: "POST",
       path: `/mydataid?n=2`
     });
+    sendReq.on("response", (res) => res.resume());
+    sendReq.on("error", () => {});
     // Send content-length
     sendReq.setHeader("Content-Length", "this is a content".length);
     // Send chunk of data
@@ -1043,6 +1095,8 @@ Host: 127.0.0.1:${pipingPort}
       method: "POST",
       path: `/mydataid?n=2`
     });
+    sendReq.on("response", (res) => res.resume());
+    sendReq.on("error", () => {});
     // Send content-length
     sendReq.setHeader("Content-Length", "this is a content".length);
     // Send chunk of data
@@ -1136,6 +1190,7 @@ Host: 127.0.0.1:${pipingPort}
       method: "POST",
       path: `/mydataid`
     });
+    sendReq1.on("error", () => {});
     // Send content-length
     sendReq1.setHeader("Content-Length", "dummy content".length);
     // Send data
@@ -1220,6 +1275,7 @@ this is a content`.replace(/\n/g, "\r\n"));
     const senderResString = (await senderResPromise).toString();
     assert(senderResString.startsWith("HTTP/1.0 200 OK\r\n"));
     assert(senderResString.match(/Content-Length: \d+\r\n/) !== null);
+    assert(senderResString.endsWith("\r\n\r\n[INFO] Transfer completed to 1 receiver(s).\n"));
   });
 
   it("should handle connection from HTTP/1.0 receiver", async () => {

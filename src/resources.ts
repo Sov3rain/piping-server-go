@@ -44,6 +44,7 @@ export const indexPage: string = `\
 <button onclick="send()">Send</button><br>
 <progress id="progress_bar" value="0" max="100" style="display: none"></progress><br>
 <div id="message"></div>
+<p>The browser waits for a final server response after the upload finishes.</p>
 <hr>
 <a href="https://piping-ui.org">Piping UI for Web</a><br>
 <a href="${NAME_TO_RESERVED_PATH.noscript.substring(1)}">Transfer without JavaScript</a><br>
@@ -102,13 +103,11 @@ export const indexPage: string = `\
       if (xhr.status === 200) {
         setProgress(e.loaded, e.total);
       }
+      setMessage("Upload complete. Waiting for the server to finish the transfer...");
     };
     xhr.onload = function () {
-      // Status code error
-      if (xhr.status !== 200) {
-        setMessage(xhr.responseText);
-        hideProgress();
-      }
+      setMessage(xhr.responseText || (xhr.status === 200 ? "Transfer completed." : "Transfer failed."));
+      hideProgress();
     };
     xhr.onerror = function () {
       setMessage("Upload error");

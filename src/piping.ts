@@ -18,48 +18,14 @@ type ReqRes = {
   readonly res: HttpRes
 };
 
-// Main purpose of this class is not to chunked-upload
-class Http1_0SenderRes {
-  private statusCodeAndHeaders: { statusCode: number, headers: http.OutgoingHttpHeaders } | undefined = undefined;
-  private chunks: string[] = [];
-
-  constructor(private res: http.ServerResponse) {}
-
-  writeHead(statusCode: number, headers: http.OutgoingHttpHeaders) {
-    this.statusCodeAndHeaders = { statusCode, headers };
-  }
-
-  write(chunk: string): void {
-    this.chunks.push(chunk);
-  }
-
-  end(chunk: string): void {
-    // this should not be occurred in proper use
-    if (this.statusCodeAndHeaders === undefined) {
-      throw new Error("statusCodeAndHeaders is not defined");
-    }
-    this.chunks.push(chunk);
-    const body = this.chunks.join("");
-    const { statusCode, headers } = this.statusCodeAndHeaders;
-    this.res.writeHead(statusCode, {
-      "Content-Length": Buffer.byteLength(body),
-      ...headers,
-    });
-    this.res.end(body);
-  }
-}
-
 type Pipe = {
-  readonly sender: {
-    readonly req: HttpReq,
-    readonly resOrNotChunked: Http1_0SenderRes | HttpRes,
-  };
+  readonly sender: ReqRes;
   readonly receivers: ReadonlyArray<ReqRes>;
 };
 
 type SenderReqResAndUnsubscribe = {
   readonly req: HttpReq,
-  readonly resOrNotChunked: Http1_0SenderRes | HttpRes,
+  readonly res: HttpRes,
   readonly unsubscribeCloseListener: () => void
 }
 
@@ -90,6 +56,10 @@ function resEndWithContentLength(res: HttpRes, statusCode: number, headers: http
   res.end(body);
 }
 
+function isResponseWritable(res: HttpRes): boolean {
+  return !(res as any).destroyed && !(res as any).writableEnded;
+}
+
 // Force "HTTP/1.0 ..." response status line, overwriting `req.socket.write`
 function forceHttp1_0StatusLine(res: http.ServerResponse) {
   const socket = res.socket!;
@@ -112,10 +82,7 @@ function forceHttp1_0StatusLine(res: http.ServerResponse) {
 function getPipeIfEstablished(p: UnestablishedPipe): Pipe | undefined {
   if (p.sender !== undefined && p.receivers.length === p.nReceivers) {
     return {
-      sender: {
-        req: p.sender.req,
-        resOrNotChunked: p.sender.resOrNotChunked,
-      },
+      sender: { req: p.sender.req, res: p.sender.res },
       receivers: p.receivers.map((r) => {
         // Unsubscribe on-close handlers
         // NOTE: this operation has side-effect
@@ -267,6 +234,20 @@ export class Server {
     }
   }
 
+  private logLifecycle(path: string, event: string, detail?: string): void {
+    const suffix = detail === undefined ? "" : `, ${detail}`;
+    this.params.logger?.info(`${event}: path='${path}'${suffix}`);
+  }
+
+  private finalizeSenderResponse(sender: ReqRes, path: string, statusCode: number, message: string): void {
+    if (isResponseWritable(sender.res)) {
+      resEndWithContentLength(sender.res, statusCode, senderAndReceiverMessageHeaders, message);
+    } else {
+      this.logLifecycle(path, "sender response skipped", `status=${statusCode}`);
+    }
+    this.removeEstablished(path);
+  }
+
   /**
    * Start data transfer
    *
@@ -281,61 +262,29 @@ export class Server {
     this.pathToUnestablishedPipe.delete(path);
 
     const {sender, receivers} = pipe;
+    this.logLifecycle(path, "transfer started", `receivers=${receivers.length}`);
 
-    // Emit message to sender
-    sender.resOrNotChunked.write(`[INFO] Start sending to ${pipe.receivers.length} receiver(s)!\n`);
+    try {
+      const isMultipart: boolean = (sender.req.headers["content-type"] ?? "").includes("multipart/form-data");
 
-    this.params.logger?.info(`Sending: path='${path}', receivers=${pipe.receivers.length}`);
+      const part: multiparty.Part | undefined =
+        isMultipart ?
+          await new Promise((resolve, reject) => {
+            const form = new multiparty.Form();
+            form.once("part", (p: multiparty.Part) => {
+              resolve(p);
+            });
+            form.once("error", (error) => {
+              reject(error);
+            });
+            // TODO: Not use any
+            form.parse(sender.req as any);
+          }) :
+          undefined;
 
-    const isMultipart: boolean = (sender.req.headers["content-type"] ?? "").includes("multipart/form-data");
+      const senderData: stream.Readable =
+        part === undefined ? sender.req : part;
 
-    const part: multiparty.Part | undefined =
-      isMultipart ?
-        await new Promise((resolve, reject) => {
-          const form = new multiparty.Form();
-          form.once("part", (p: multiparty.Part) => {
-            resolve(p);
-          });
-          form.on("error", () => {
-            this.params.logger?.info(`sender-multipart on-error: '${path}'`);
-          });
-          // TODO: Not use any
-          form.parse(sender.req as any);
-        }) :
-        undefined;
-
-    const senderData: stream.Readable =
-      part === undefined ? sender.req : part;
-
-    let abortedCount: number = 0;
-    let endCount: number = 0;
-    for (const receiver of receivers) {
-      // Close receiver
-      const abortedListener = (): void => {
-        abortedCount++;
-        sender.resOrNotChunked.write("[INFO] A receiver aborted.\n");
-        senderData.unpipe(passThrough);
-        // If aborted-count is # of receivers
-        if (abortedCount === receivers.length) {
-          sender.resOrNotChunked.end("[INFO] All receiver(s) was/were aborted halfway.\n");
-          // Delete from established
-          this.removeEstablished(path);
-          // Close sender
-          sender.req.destroy();
-        }
-      };
-      // End
-      const endListener = (): void => {
-        endCount++;
-        // If end-count is # of receivers
-        if (endCount === receivers.length) {
-          sender.resOrNotChunked.end("[INFO] All receiver(s) was/were received successfully.\n");
-          // Delete from established
-          this.removeEstablished(path);
-        }
-      };
-
-      // Decide Content-Length
       const contentLength: string | number | undefined = part === undefined ?
         sender.req.headers["content-length"] : part.byteCount;
       // Get Content-Type from part or HTTP header.
@@ -364,62 +313,134 @@ export class Server {
       const parseHeaders = utils.parseHeaders(sender.req.rawHeaders);
       const xPiping: string[] = parseHeaders.get("x-piping") ?? [];
 
-      // Write headers to a receiver
-      receiver.res.writeHead(200, {
-        ...(contentLength === undefined ? {} : {"Content-Length": contentLength}),
-        ...(contentType === undefined ? {} : {"Content-Type": contentType}),
-        ...(contentDisposition === undefined ? {} : {"Content-Disposition": contentDisposition}),
-        "X-Piping": xPiping,
-        "Access-Control-Allow-Origin": "*",
-        ...(xPiping.length === 0 ? {} : {"Access-Control-Expose-Headers": "X-Piping"}),
-        "X-Robots-Tag": "none",
-      });
+      type ReceiverTransferState = "pending" | "completed" | "aborted";
+      const receiverStates: ReceiverTransferState[] = receivers.map(() => "pending");
+      let senderResponseFinalized = false;
+      let senderEnded = false;
 
-      const passThrough = new stream.PassThrough();
-      senderData.pipe(passThrough);
-      passThrough.pipe(receiver.res);
-      receiver.req.on("end", () => {
-        this.params.logger?.info(`receiver on-end: '${path}'`);
-        endListener();
-      });
-      receiver.req.on("close", () => {
-        this.params.logger?.info(`receiver on-close: '${path}'`);
-      });
-      receiver.req.on("aborted", () => {
-        this.params.logger?.info(`receiver on-aborted: '${path}'`);
-        abortedListener();
-      });
-      receiver.req.on("error", (err) => {
-        this.params.logger?.info(`receiver on-error: '${path}'`);
-        abortedListener();
-      });
-    }
-
-    senderData.on("close", () => {
-      this.params.logger?.info(`sender on-close: '${path}'`);
-    });
-
-    senderData.on("aborted", () => {
-      for (const receiver of receivers) {
-        // Close a receiver
-        if (receiver.res.connection !== undefined && receiver.res.connection !== null) {
-          receiver.res.connection.destroy();
+      const finalizeSender = (statusCode: number, message: string): void => {
+        if (senderResponseFinalized) {
+          return;
         }
-      }
-      this.params.logger?.info(`sender on-aborted: '${path}'`);
-    });
+        senderResponseFinalized = true;
+        this.finalizeSenderResponse(sender, path, statusCode, message);
+      };
 
-    senderData.on("end", () => {
-      sender.resOrNotChunked.write("[INFO] Sent successfully!\n");
-      this.params.logger?.info(`sender on-end: '${path}'`);
-    });
+      const maybeFinalizeSender = (): void => {
+        const completedCount = receiverStates.filter((state) => state === "completed").length;
+        const abortedCount = receiverStates.filter((state) => state === "aborted").length;
+        if (completedCount + abortedCount !== receiverStates.length) {
+          return;
+        }
+        if (abortedCount === 0) {
+          this.logLifecycle(path, "transfer completed", `receivers=${completedCount}`);
+          finalizeSender(200, `[INFO] Transfer completed to ${completedCount} receiver(s).\n`);
+          return;
+        }
+        if (completedCount === 0) {
+          if (!senderEnded) {
+            this.logLifecycle(path, "all receivers aborted", "draining sender upload");
+            senderData.resume();
+            return;
+          }
+          this.logLifecycle(path, "transfer failed", "all receivers aborted");
+          finalizeSender(500, "[ERROR] All receiver(s) aborted before completion.\n");
+          return;
+        }
+        this.logLifecycle(path, "transfer partially failed", `completed=${completedCount}, aborted=${abortedCount}`);
+        finalizeSender(500, `[ERROR] Transfer completed for ${completedCount}/${receiverStates.length} receiver(s).\n`);
+      };
 
-    senderData.on("error", (error) => {
-      sender.resOrNotChunked.end("[ERROR] Failed to send.\n");
-      // Delete from established
-      this.removeEstablished(path);
-      this.params.logger?.info(`sender on-error: '${path}'`);
-    });
+      receivers.forEach((receiver, index) => {
+        // Write headers to a receiver
+        receiver.res.writeHead(200, {
+          ...(contentLength === undefined ? {} : {"Content-Length": contentLength}),
+          ...(contentType === undefined ? {} : {"Content-Type": contentType}),
+          ...(contentDisposition === undefined ? {} : {"Content-Disposition": contentDisposition}),
+          "X-Piping": xPiping,
+          "Access-Control-Allow-Origin": "*",
+          ...(xPiping.length === 0 ? {} : {"Access-Control-Expose-Headers": "X-Piping"}),
+          "X-Robots-Tag": "none",
+        });
+
+        const passThrough = new stream.PassThrough();
+        senderData.pipe(passThrough);
+        passThrough.pipe(receiver.res);
+
+        const completeReceiver = (state: ReceiverTransferState, event: string): void => {
+          if (receiverStates[index] !== "pending") {
+            return;
+          }
+          receiverStates[index] = state;
+          this.logLifecycle(path, event, `receiver=${index + 1}/${receivers.length}`);
+          if (state === "aborted") {
+            senderData.unpipe(passThrough);
+            passThrough.destroy();
+          }
+          maybeFinalizeSender();
+        };
+
+        receiver.res.once("finish", () => {
+          completeReceiver("completed", "receiver finished");
+        });
+        receiver.res.once("close", () => {
+          if (!(receiver.res as any).writableFinished) {
+            completeReceiver("aborted", "receiver response closed");
+            return;
+          }
+          this.logLifecycle(path, "receiver response closed", `receiver=${index + 1}/${receivers.length}`);
+        });
+        receiver.req.once("aborted", () => {
+          completeReceiver("aborted", "receiver aborted");
+        });
+        receiver.req.once("error", () => {
+          completeReceiver("aborted", "receiver request error");
+        });
+        receiver.res.once("error", () => {
+          completeReceiver("aborted", "receiver response error");
+        });
+      });
+
+      sender.req.once("close", () => {
+        this.logLifecycle(path, "sender request closed");
+      });
+
+      senderData.on("close", () => {
+        this.logLifecycle(path, "sender stream closed");
+      });
+
+      senderData.on("aborted", () => {
+        for (const receiver of receivers) {
+          // Close a receiver
+          if (receiver.res.connection !== undefined && receiver.res.connection !== null) {
+            receiver.res.connection.destroy();
+          }
+        }
+        this.logLifecycle(path, "sender aborted");
+        if (!senderResponseFinalized) {
+          this.removeEstablished(path);
+        }
+      });
+
+      senderData.on("end", () => {
+        senderEnded = true;
+        this.logLifecycle(path, "sender stream ended");
+        maybeFinalizeSender();
+      });
+
+      senderData.on("error", () => {
+        for (const receiver of receivers) {
+          if (receiver.res.connection !== undefined && receiver.res.connection !== null) {
+            receiver.res.connection.destroy();
+          }
+        }
+        this.logLifecycle(path, "sender stream error");
+        finalizeSender(500, "[ERROR] Failed to send.\n");
+      });
+    } catch (error) {
+      this.logLifecycle(path, "transfer setup failed", error instanceof Error ? error.message : "unknown error");
+      this.finalizeSenderResponse(sender, path, 500, "[ERROR] Failed to start transfer.\n");
+    }
   }
 
   // Delete from established
@@ -463,10 +484,7 @@ export class Server {
         receivers: [],
         nReceivers: nReceivers
       });
-      // Add headers
-      sender.resOrNotChunked.writeHead(200, senderAndReceiverMessageHeaders);
-      // Send waiting message
-      sender.resOrNotChunked.write(`[INFO] Waiting for ${nReceivers} receiver(s)...\n`);
+      this.logLifecycle(reqPath, "sender connected", `waiting-for=${nReceivers}`);
       return;
     }
     // If a sender has been connected already
@@ -481,12 +499,7 @@ export class Server {
     }
     // Register the sender
     unestablishedPipe.sender = this.createSenderOrReceiver("sender", req, res, reqPath);
-    // Add headers
-    unestablishedPipe.sender.resOrNotChunked.writeHead(200, senderAndReceiverMessageHeaders);
-    // Send waiting message
-    unestablishedPipe.sender.resOrNotChunked.write(`[INFO] Waiting for ${nReceivers} receiver(s)...\n`);
-    // Send the number of receivers information
-    unestablishedPipe.sender.resOrNotChunked.write(`[INFO] ${unestablishedPipe.receivers.length} receiver(s) has/have been connected.\n`);
+    this.logLifecycle(reqPath, "sender connected", `receivers=${unestablishedPipe.receivers.length}/${nReceivers}`);
     // Get pipeOpt if established
     const pipe: Pipe | undefined =
       getPipeIfEstablished(unestablishedPipe);
@@ -540,6 +553,7 @@ export class Server {
         receivers: [receiver],
         nReceivers: nReceivers
       });
+      this.logLifecycle(reqPath, "receiver connected", `receivers=1/${nReceivers}`);
       return;
     }
     // If the number of receivers is not the same size as connecting pipe's one
@@ -557,11 +571,7 @@ export class Server {
     const receiver = this.createSenderOrReceiver("receiver", req, res, reqPath);
     // Append new receiver
     unestablishedPipe.receivers.push(receiver);
-
-    if (unestablishedPipe.sender !== undefined) {
-      // Send connection message to the sender
-      unestablishedPipe.sender.resOrNotChunked.write("[INFO] A receiver was connected.\n");
-    }
+    this.logLifecycle(reqPath, "receiver connected", `receivers=${unestablishedPipe.receivers.length}/${nReceivers}`);
 
     // Get pipeOpt if established
     const pipe: Pipe | undefined =
@@ -639,14 +649,7 @@ export class Server {
     if (reqResType === "sender" && req.httpVersion === "1.0") {
       return {
         req: req,
-        resOrNotChunked: new Http1_0SenderRes(res as http.ServerResponse),
-        unsubscribeCloseListener,
-      };
-    }
-    if (reqResType === "sender") {
-      return {
-        req: req,
-        resOrNotChunked: res,
+        res: res,
         unsubscribeCloseListener,
       };
     }

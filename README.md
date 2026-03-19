@@ -1,8 +1,10 @@
 # Piping Server
 [![npm](https://img.shields.io/npm/v/piping-server.svg)](https://www.npmjs.com/package/piping-server) [![CodeFactor](https://www.codefactor.io/repository/github/nwtgck/piping-server/badge)](https://www.codefactor.io/repository/github/nwtgck/piping-server) [![Node CI](https://github.com/nwtgck/piping-server/actions/workflows/ci.yml/badge.svg)](https://github.com/nwtgck/piping-server/actions/workflows/ci.yml) [![Docker Automated build](https://img.shields.io/docker/automated/nwtgck/piping-server.svg)](https://hub.docker.com/r/nwtgck/piping-server/) [![](https://images.microbadger.com/badges/image/nwtgck/piping-server.svg)](https://microbadger.com/images/nwtgck/piping-server "Get your own image badge on microbadger.com")  
 
-Infinitely transfer between every device over HTTP/HTTPS  
+Railway-friendly finite transfer between every device over HTTP/HTTPS  
 <img src="demo_images/piping-server-terminal-hello.gif" alt="Piping Server hello" width="600">
+
+This fork keeps the same `POST/PUT /path -> GET /path` protocol, but it no longer streams progress text back to the sender while the upload is in flight. The sender now receives one final plain-text response when the transfer succeeds or fails, which is friendlier to managed HTTP/2 proxies such as Railway.
 
 
 ## Transfer
@@ -25,7 +27,7 @@ You can also use Web UI like <https://ppng.io> on your browser. A more modern UI
 
 
 ### Stream
-The most important thing is that the data are streamed. This means that you can **transfer any data infinitely**. The demo below transfers an infinite text stream with `seq inf`.
+Receiver delivery is still streamed, but this fork targets finite transfers on a single instance. It does not try to preserve the original "infinite transfer" behavior on proxy-managed hosting.
 
 <img src="demo_images/seq-inf.gif" alt="infnite text stream" width="400">
 
