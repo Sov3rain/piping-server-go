@@ -49,11 +49,15 @@ const senderAndReceiverMessageHeaders: Readonly<http.OutgoingHttpHeaders> = {
 };
 
 function resEndWithContentLength(res: HttpRes, statusCode: number, headers: http.OutgoingHttpHeaders, body: string) {
-  res.writeHead(statusCode, {
+  writeHead(res, statusCode, {
     "Content-Length": Buffer.byteLength(body),
     ...headers,
   });
   res.end(body);
+}
+
+function writeHead(res: HttpRes, statusCode: number, headers?: http.OutgoingHttpHeaders): void {
+  (res as any).writeHead(statusCode, headers);
 }
 
 function isResponseWritable(res: HttpRes): boolean {
@@ -154,7 +158,7 @@ export class Server {
           this.handleReceiver(req, res, reqUrl);
           break;
         case "OPTIONS":
-          res.writeHead(200, {
+          writeHead(res, 200, {
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "GET, HEAD, POST, PUT, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type, Content-Disposition, X-Piping",
@@ -222,11 +226,11 @@ export class Server {
         return;
       case NAME_TO_RESERVED_PATH.faviconIco:
         // (from: https://stackoverflow.com/a/35408810/2885946)
-        res.writeHead(204);
+        writeHead(res, 204);
         res.end();
         break;
       case NAME_TO_RESERVED_PATH.robotsTxt:
-        res.writeHead(404, {
+        writeHead(res, 404, {
           "Content-Length": 0,
         });
         res.end();
@@ -353,7 +357,7 @@ export class Server {
 
       receivers.forEach((receiver, index) => {
         // Write headers to a receiver
-        receiver.res.writeHead(200, {
+        writeHead(receiver.res, 200, {
           ...(contentLength === undefined ? {} : {"Content-Length": contentLength}),
           ...(contentType === undefined ? {} : {"Content-Type": contentType}),
           ...(contentDisposition === undefined ? {} : {"Content-Disposition": contentDisposition}),

@@ -11,6 +11,10 @@ import {VERSION} from "../src/version";
 import {EventEmitter} from "events";
 import {URL, UrlObject} from "url";
 
+function toBuffer(chunk: string | Buffer): Buffer {
+  return Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+}
+
 /**
  * Listen and return port
  * @param server
@@ -216,7 +220,7 @@ describe("piping.Server", () => {
         const http1_0GetResPromise: Promise<Buffer> = new Promise((resolve, reject) => {
           const chunks: Buffer[] = [];
           const socket = net.connect(pipingPort, "127.0.0.1", () => {
-            socket.on("data", (chunk) => chunks.push(chunk));
+            socket.on("data", (chunk) => chunks.push(toBuffer(chunk)));
             socket.on("end", () => resolve(Buffer.concat(chunks)));
             socket.on("error", (err) => reject(err));
             socket.write(`\
@@ -368,7 +372,7 @@ Host: 127.0.0.1:${pipingPort}
     // Get data
     const getBody: Buffer = await new Promise((resolve) => {
       const chunks: Buffer[] = [];
-      getReq.on("data", (data) => chunks.push(data));
+      getReq.on("data", (data) => chunks.push(toBuffer(data)));
       getReq.on("end", () => resolve(Buffer.concat(chunks)));
     });
 
@@ -1251,7 +1255,7 @@ Host: 127.0.0.1:${pipingPort}
     const senderResPromise: Promise<Buffer> = new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
       const socket = net.connect(pipingPort, "127.0.0.1", () => {
-        socket.on("data", (chunk) => chunks.push(chunk));
+        socket.on("data", (chunk) => chunks.push(toBuffer(chunk)));
         socket.on("end", () => resolve(Buffer.concat(chunks)));
         socket.on("error", (err) => reject(err));
         socket.write(`\
@@ -1289,7 +1293,7 @@ this is a content`.replace(/\n/g, "\r\n"));
     const receiverResPromise: Promise<Buffer> = new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
       const socket = net.connect(pipingPort, "127.0.0.1", () => {
-        socket.on("data", (chunk) => chunks.push(chunk));
+        socket.on("data", (chunk) => chunks.push(toBuffer(chunk)));
         socket.on("end", () => resolve(Buffer.concat(chunks)));
         socket.on("error", (err) => reject(err));
         socket.write(`\
