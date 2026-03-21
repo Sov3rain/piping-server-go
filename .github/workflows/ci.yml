@@ -1,0 +1,48 @@
+name: Go CI
+
+on: [push, pull_request]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+
+  docker_test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t piping-server .
+      - run: docker run -d --rm -p 8080:8080 --name piping-server piping-server
+      - run: |
+          set -eu
+          for _ in 1 2 3 4 5; do
+            if curl -fsS http://127.0.0.1:8080/version >/tmp/version.txt; then
+              break
+            fi
+            sleep 1
+          done
+          grep -Fx "1.12.9-go" /tmp/version.txt
+      - run: |
+          set -eu
+          rm -f /tmp/received.txt /tmp/sender.txt
+          (curl -fsS http://127.0.0.1:8080/ci-transfer > /tmp/received.txt) &
+          receiver_pid=$!
+          sleep 1
+          printf "hello from docker ci" | curl -fsS -X POST --data-binary @- http://127.0.0.1:8080/ci-transfer > /tmp/sender.txt
+          wait "$receiver_pid"
+          grep -Fx "[INFO] Transfer completed to 1 receiver(s)." /tmp/sender.txt
+          grep -Fx "hello from docker ci" /tmp/received.txt
+      - if: always()
+        run: docker logs piping-server
+      - if: always()
+        run: docker stop piping-server
