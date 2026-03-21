@@ -7,7 +7,7 @@ COPY *.go ./
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/piping-server .
 
-FROM alpine:3.20
+FROM alpine:3.23
 
 RUN adduser -D -u 10001 appuser
 
