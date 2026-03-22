@@ -22,7 +22,7 @@ func TestReservedEndpoints(t *testing.T) {
 		statusCode int
 		bodyPart   string
 	}{
-		{path: "/help", statusCode: http.StatusOK, bodyPart: "curl -X POST --data-binary"},
+		{path: "/help", statusCode: http.StatusOK, bodyPart: "https://github.com/Sov3rain/piping-server-go"},
 		{path: "/version", statusCode: http.StatusOK, bodyPart: Version},
 		{path: "/health", statusCode: http.StatusOK, bodyPart: "ok"},
 		{path: "/", statusCode: http.StatusNotFound, bodyPart: "Not Found"},
