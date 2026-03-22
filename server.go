@@ -11,7 +11,7 @@ import (
 	"sync"
 )
 
-const Version = "1.12.9-go"
+const Version = "1.0.0"
 
 type senderResult struct {
 	status int
@@ -453,7 +453,7 @@ func baseURL(req *http.Request) string {
 
 func generateHelpPage(url string, version string) string {
 	return fmt.Sprintf(`Help for Piping Server %s
-(Repository: https://github.com/nwtgck/piping-server)
+(Repository: https://github.com/Sov3rain/piping-server-go)
 
 ======= Get  =======
 curl %s/mypath
