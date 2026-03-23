@@ -25,6 +25,28 @@ type senderConn struct {
 	once     sync.Once
 }
 
+type receiverConn struct {
+	req  *http.Request
+	w    http.ResponseWriter
+	done chan struct{}
+	once sync.Once
+}
+
+type session struct {
+	path              string
+	expectedReceivers int
+	sender            *senderConn
+	receivers         []*receiverConn
+	established       bool
+}
+
+type Server struct {
+	mu       sync.Mutex
+	sessions map[string]*session
+	logger   *slog.Logger
+	version  string
+}
+
 func newSenderConn(w http.ResponseWriter, req *http.Request) *senderConn {
 	return &senderConn{
 		req:      req,
@@ -42,13 +64,6 @@ func (s *senderConn) complete(result *senderResult) {
 	})
 }
 
-type receiverConn struct {
-	req  *http.Request
-	w    http.ResponseWriter
-	done chan struct{}
-	once sync.Once
-}
-
 func newReceiverConn(w http.ResponseWriter, req *http.Request) *receiverConn {
 	return &receiverConn{
 		req:  req,
@@ -61,21 +76,6 @@ func (r *receiverConn) complete() {
 	r.once.Do(func() {
 		close(r.done)
 	})
-}
-
-type session struct {
-	path              string
-	expectedReceivers int
-	sender            *senderConn
-	receivers         []*receiverConn
-	established       bool
-}
-
-type Server struct {
-	mu       sync.Mutex
-	sessions map[string]*session
-	logger   *slog.Logger
-	version  string
 }
 
 func newLogger() *slog.Logger {
@@ -565,6 +565,15 @@ func parseReceiverCount(req *http.Request) (int, error) {
 	return n, nil
 }
 
+func isReservedPath(path string) bool {
+	switch path {
+	case "/", "/help", "/version", "/health", "/noscript", "/favicon.ico", "/robots.txt":
+		return true
+	default:
+		return false
+	}
+}
+
 func baseURL(req *http.Request) string {
 	scheme := "http"
 	if req.TLS != nil || strings.Contains(strings.ToLower(req.Header.Get("X-Forwarded-Proto")), "https") {
@@ -595,15 +604,6 @@ echo 'hello!' | curl -X POST --data-binary @- %s/mypath
 # Send to multiple receivers
 curl -X POST --data-binary @myfile "%s/mypath?n=3"
 `, version, url, url, url, url)
-}
-
-func isReservedPath(path string) bool {
-	switch path {
-	case "/", "/help", "/version", "/health", "/noscript", "/favicon.ico", "/robots.txt":
-		return true
-	default:
-		return false
-	}
 }
 
 func senderAndReceiverHeaders() map[string]string {
