@@ -1,6 +1,6 @@
 # Piping Server (Go)
 
-This branch replaces the Node/TypeScript server with a small Go implementation designed for Docker and Railway.
+Piping Server (Go) is a small Go implementation of Piping Server designed for simple Docker deployments.
 
 ## Supported protocol
 
@@ -9,16 +9,16 @@ This branch replaces the Node/TypeScript server with a small Go implementation d
 - `GET /path?n=3` and `POST /path?n=3` enable fan-out to multiple receivers
 - `GET /help`, `GET /version`, `GET /health` are available as utility endpoints
 
-The transfer stays streamed between sender and receiver(s), but the sender only gets one final plain-text response when the transfer succeeds or fails. That keeps the request shape compatible with proxy-managed platforms such as Railway.
+Transfers stay streamed between the sender and receiver(s), but the sender only gets one final plain-text response when the transfer succeeds or fails. This keeps the request shape compatible with proxy-managed platforms.
 
-## Differences from the original version
+## Design notes
 
-- This branch is a Go rewrite; the original project is implemented in Node/TypeScript.
-- Uploads are `POST` only here. The original server also accepted `PUT`, which kept `curl -T` compatibility.
-- The sender no longer receives live progress text during upload. It gets one final plain-text response after success or failure.
-- The built-in browser UI and CLI flags were removed in this branch.
-- Application-managed HTTPS was removed. TLS is expected to be terminated by the hosting platform or reverse proxy.
-- The current target is a simple Docker deployment on a single instance, especially for Railway-style hosting.
+- This implementation is written in Go. The original Piping Server project is implemented in Node/TypeScript.
+- Uploads are `POST` only in this server. The original server also accepted `PUT`, which kept `curl -T` compatibility.
+- The sender does not receive live progress text during upload. It gets one final plain-text response after success or failure.
+- This server does not include a built-in browser UI or CLI flags.
+- TLS is expected to be terminated by the hosting platform or reverse proxy.
+- The current target is a simple single-instance Docker deployment.
 
 ## Examples
 
@@ -57,7 +57,7 @@ Run locally:
 docker run --rm -p 8080:8080 -e PORT=8080 piping-server-go
 ```
 
-Railway will inject `PORT`; the server always binds to `0.0.0.0:$PORT`.
+The server always binds to `0.0.0.0:$PORT`.
 
 ## Headers forwarded to receivers
 
@@ -66,9 +66,6 @@ Railway will inject `PORT`; the server always binds to `0.0.0.0:$PORT`.
 - `Content-Disposition`
 - `X-Piping`
 
-## Removed from this branch
+## Original Piping Server
 
-- CLI flags
-- `PUT` uploads
-- built-in browser UI
-- application-managed HTTPS
+The original Piping Server project is available at https://github.com/nwtgck/piping-server.
