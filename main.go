@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"net/http"
 	"os"
 )
@@ -13,10 +12,14 @@ func main() {
 	}
 
 	addr := "0.0.0.0:" + port
-	log.Printf("Piping Server %s", Version)
-	log.Printf("Listening on http://%s", addr)
+	logger := newLogger()
+	logger.Info("server starting",
+		"version", Version,
+		"addr", addr,
+	)
 
 	if err := http.ListenAndServe(addr, NewServer(Version)); err != nil {
-		log.Fatalf("server failed: %v", err)
+		logger.Error("server stopped", "err", err)
+		os.Exit(1)
 	}
 }

@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -74,8 +74,14 @@ type session struct {
 type Server struct {
 	mu       sync.Mutex
 	sessions map[string]*session
-	logger   *log.Logger
+	logger   *slog.Logger
 	version  string
+}
+
+func newLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
 }
 
 func NewServer(version string) *Server {
@@ -84,7 +90,7 @@ func NewServer(version string) *Server {
 	}
 	return &Server{
 		sessions: make(map[string]*session),
-		logger:   log.New(os.Stdout, "", log.LstdFlags),
+		logger:   newLogger(),
 		version:  version,
 	}
 }
@@ -95,7 +101,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		path = "/"
 	}
 
-	s.logger.Printf("%s %s", req.Method, req.URL.String())
+	s.logger.Info("request received",
+		"method", req.Method,
+		"path", path,
+		"query", req.URL.RawQuery,
+		"remote_addr", req.RemoteAddr,
+	)
 
 	if req.Method == http.MethodGet || req.Method == http.MethodHead {
 		if s.handleReserved(w, req, path, req.Method == http.MethodHead) {
@@ -106,10 +117,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	switch req.Method {
 	case http.MethodPost:
 		if isReservedPath(path) {
+			s.logger.Warn("reserved path rejected",
+				"method", req.Method,
+				"path", path,
+			)
 			writeText(w, http.StatusBadRequest, senderAndReceiverHeaders(), fmt.Sprintf("[ERROR] Cannot send to the reserved path '%s'. (e.g. '/mypath123')\n", path), false)
 			return
 		}
 		if req.Header.Get("Content-Range") != "" {
+			s.logger.Warn("content-range rejected",
+				"method", req.Method,
+				"path", path,
+			)
 			writeText(w, http.StatusBadRequest, senderAndReceiverHeaders(), "[ERROR] Content-Range is not supported for now in POST\n", false)
 			return
 		}
@@ -162,6 +181,12 @@ func (s *Server) handleOptions(w http.ResponseWriter, req *http.Request) {
 func (s *Server) handleSender(w http.ResponseWriter, req *http.Request) {
 	nReceivers, err := parseReceiverCount(req)
 	if err != nil {
+		s.logger.Warn("invalid receiver count",
+			"method", req.Method,
+			"path", req.URL.Path,
+			"query", req.URL.RawQuery,
+			"err", err,
+		)
 		writeText(w, http.StatusBadRequest, senderAndReceiverHeaders(), err.Error(), false)
 		return
 	}
@@ -179,25 +204,47 @@ func (s *Server) handleSender(w http.ResponseWriter, req *http.Request) {
 			expectedReceivers: nReceivers,
 		}
 		s.sessions[path] = current
+		s.logger.Debug("session created",
+			"path", path,
+			"expected_receivers", nReceivers,
+		)
 	} else {
 		if current.established {
 			s.mu.Unlock()
+			s.logger.Warn("sender rejected for established session",
+				"path", path,
+				"expected_receivers", current.expectedReceivers,
+			)
 			writeText(w, http.StatusBadRequest, senderAndReceiverHeaders(), fmt.Sprintf("[ERROR] Connection on '%s' has been established already.\n", path), false)
 			return
 		}
 		if current.expectedReceivers != nReceivers {
 			s.mu.Unlock()
+			s.logger.Warn("sender receiver-count mismatch",
+				"path", path,
+				"expected_receivers", current.expectedReceivers,
+				"requested_receivers", nReceivers,
+			)
 			writeText(w, http.StatusBadRequest, senderAndReceiverHeaders(), fmt.Sprintf("[ERROR] The number of receivers should be %d but %d.\n", current.expectedReceivers, nReceivers), false)
 			return
 		}
 		if current.sender != nil {
 			s.mu.Unlock()
+			s.logger.Warn("duplicate sender rejected",
+				"path", path,
+				"expected_receivers", current.expectedReceivers,
+			)
 			writeText(w, http.StatusBadRequest, senderAndReceiverHeaders(), fmt.Sprintf("[ERROR] Another sender has been connected on '%s'.\n", path), false)
 			return
 		}
 	}
 
 	current.sender = sender
+	s.logger.Debug("sender connected",
+		"path", path,
+		"expected_receivers", current.expectedReceivers,
+		"connected_receivers", len(current.receivers),
+	)
 	if len(current.receivers) == current.expectedReceivers {
 		current.established = true
 		shouldStart = true
@@ -219,12 +266,21 @@ func (s *Server) handleSender(w http.ResponseWriter, req *http.Request) {
 
 func (s *Server) handleReceiver(w http.ResponseWriter, req *http.Request) {
 	if req.Header.Get("Service-Worker") == "script" {
+		s.logger.Warn("service worker registration rejected",
+			"path", req.URL.Path,
+		)
 		writeText(w, http.StatusBadRequest, senderAndReceiverHeaders(), "[ERROR] Service Worker registration is rejected.\n", false)
 		return
 	}
 
 	nReceivers, err := parseReceiverCount(req)
 	if err != nil {
+		s.logger.Warn("invalid receiver count",
+			"method", req.Method,
+			"path", req.URL.Path,
+			"query", req.URL.RawQuery,
+			"err", err,
+		)
 		writeText(w, http.StatusBadRequest, senderAndReceiverHeaders(), err.Error(), false)
 		return
 	}
@@ -242,25 +298,47 @@ func (s *Server) handleReceiver(w http.ResponseWriter, req *http.Request) {
 			expectedReceivers: nReceivers,
 		}
 		s.sessions[path] = current
+		s.logger.Debug("session created",
+			"path", path,
+			"expected_receivers", nReceivers,
+		)
 	} else {
 		if current.established {
 			s.mu.Unlock()
+			s.logger.Warn("receiver rejected for established session",
+				"path", path,
+				"expected_receivers", current.expectedReceivers,
+			)
 			writeText(w, http.StatusBadRequest, senderAndReceiverHeaders(), fmt.Sprintf("[ERROR] Connection on '%s' has been established already.\n", path), false)
 			return
 		}
 		if current.expectedReceivers != nReceivers {
 			s.mu.Unlock()
+			s.logger.Warn("receiver-count mismatch",
+				"path", path,
+				"expected_receivers", current.expectedReceivers,
+				"requested_receivers", nReceivers,
+			)
 			writeText(w, http.StatusBadRequest, senderAndReceiverHeaders(), fmt.Sprintf("[ERROR] The number of receivers should be %d but %d.\n", current.expectedReceivers, nReceivers), false)
 			return
 		}
 		if len(current.receivers) == current.expectedReceivers {
 			s.mu.Unlock()
+			s.logger.Warn("receiver limit reached",
+				"path", path,
+				"expected_receivers", current.expectedReceivers,
+			)
 			writeText(w, http.StatusBadRequest, senderAndReceiverHeaders(), "[ERROR] The number of receivers has reached limits.\n", false)
 			return
 		}
 	}
 
 	current.receivers = append(current.receivers, receiver)
+	s.logger.Debug("receiver connected",
+		"path", path,
+		"connected_receivers", len(current.receivers),
+		"expected_receivers", current.expectedReceivers,
+	)
 	if current.sender != nil && len(current.receivers) == current.expectedReceivers {
 		current.established = true
 		shouldStart = true
@@ -291,6 +369,11 @@ func (s *Server) watchWaitingSender(path string, sender *senderConn) {
 	if len(current.receivers) == 0 {
 		delete(s.sessions, path)
 	}
+	s.logger.Warn("waiting sender disconnected",
+		"path", path,
+		"expected_receivers", current.expectedReceivers,
+		"connected_receivers", len(current.receivers),
+	)
 	sender.complete(nil)
 }
 
@@ -320,6 +403,11 @@ func (s *Server) watchWaitingReceiver(path string, receiver *receiverConn) {
 	if current.sender == nil && len(current.receivers) == 0 {
 		delete(s.sessions, path)
 	}
+	s.logger.Warn("waiting receiver disconnected",
+		"path", path,
+		"remaining_receivers", len(current.receivers),
+		"expected_receivers", current.expectedReceivers,
+	)
 	receiver.complete()
 }
 
@@ -334,6 +422,11 @@ func (s *Server) runTransfer(current *session) {
 		writeTransferHeaders(receiver.w, sender.req.Header)
 	}
 
+	s.logger.Info("transfer started",
+		"path", current.path,
+		"receiver_count", len(receivers),
+	)
+
 	activeReceivers := append([]*receiverConn(nil), receivers...)
 	abortedCount := 0
 	buffer := make([]byte, 32*1024)
@@ -346,6 +439,10 @@ func (s *Server) runTransfer(current *session) {
 			for _, receiver := range activeReceivers {
 				if receiver.req.Context().Err() != nil {
 					abortedCount++
+					s.logger.Warn("receiver aborted during transfer",
+						"path", current.path,
+						"aborted_receivers", abortedCount,
+					)
 					receiver.complete()
 					continue
 				}
@@ -354,14 +451,27 @@ func (s *Server) runTransfer(current *session) {
 					continue
 				}
 				abortedCount++
+				s.logger.Warn("receiver write failed during transfer",
+					"path", current.path,
+					"aborted_receivers", abortedCount,
+				)
 				receiver.complete()
 			}
 			activeReceivers = nextActive
 
 			if len(activeReceivers) == 0 {
 				if _, drainErr := io.Copy(io.Discard, sender.req.Body); drainErr != nil {
-					s.logger.Printf("failed to drain sender body for %s: %v", current.path, drainErr)
+					s.logger.Error("failed to drain sender body",
+						"path", current.path,
+						"err", drainErr,
+					)
 				}
+				s.logger.Error("transfer failed",
+					"path", current.path,
+					"expected_receivers", current.expectedReceivers,
+					"aborted_receivers", abortedCount,
+					"err", "all receivers aborted before completion",
+				)
 				sender.complete(&senderResult{
 					status: http.StatusInternalServerError,
 					body:   "[ERROR] All receiver(s) aborted before completion.\n",
@@ -388,6 +498,11 @@ func (s *Server) runTransfer(current *session) {
 
 			completedCount := len(completedReceivers)
 			if abortedCount == 0 {
+				s.logger.Info("transfer completed",
+					"path", current.path,
+					"completed_receivers", completedCount,
+					"expected_receivers", current.expectedReceivers,
+				)
 				sender.complete(&senderResult{
 					status: http.StatusOK,
 					body:   fmt.Sprintf("[INFO] Transfer completed to %d receiver(s).\n", completedCount),
@@ -395,6 +510,12 @@ func (s *Server) runTransfer(current *session) {
 				return
 			}
 
+			s.logger.Warn("transfer completed with receiver aborts",
+				"path", current.path,
+				"completed_receivers", completedCount,
+				"expected_receivers", current.expectedReceivers,
+				"aborted_receivers", abortedCount,
+			)
 			sender.complete(&senderResult{
 				status: http.StatusInternalServerError,
 				body:   fmt.Sprintf("[ERROR] Transfer completed for %d/%d receiver(s).\n", completedCount, current.expectedReceivers),
@@ -405,6 +526,12 @@ func (s *Server) runTransfer(current *session) {
 		for _, receiver := range activeReceivers {
 			receiver.complete()
 		}
+		s.logger.Error("transfer failed",
+			"path", current.path,
+			"expected_receivers", current.expectedReceivers,
+			"aborted_receivers", abortedCount,
+			"err", err,
+		)
 		sender.complete(&senderResult{
 			status: http.StatusInternalServerError,
 			body:   "[ERROR] Failed to send.\n",
