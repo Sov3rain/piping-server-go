@@ -31,7 +31,7 @@ jobs:
             fi
             sleep 1
           done
-          grep -Fx "1.0.0" /tmp/version.txt
+          grep -Fx "1.0.1" /tmp/version.txt
       - run: |
           set -eu
           rm -f /tmp/received.txt /tmp/sender.txt
